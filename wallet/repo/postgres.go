@@ -1,13 +1,11 @@
 package repository
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"julo-mini-wallet/wallet"
-	"strconv"
+	"time"
 
-	sq "github.com/Masterminds/squirrel"
+	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -23,39 +21,74 @@ func NewRepo(master *sqlx.DB) wallet.Repository {
 	}
 }
 
-func (p *repositoryStruct) GetAccount(userID string) (walletData wallet.Wallet, err error) {
-	placeholder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
-	psql := placeholder.Select("id", "owned_by", "status", "balance", "enabled_at").From("wallet")
-	whereSQL := psql.Where(sq.Eq{"owned_by": userID})
+func (p *repositoryStruct) UpdateAccountBalance(userID string, balance float64) (err error) {
 
-	rows, err := whereSQL.RunWith(p.pqConnections).Query()
+	stmt, err := p.pqConnections.Prepare("UPDATE wallet set balance = $1 where owned_by = $2")
 	if err != nil {
-		return walletData, err
+		return
 	}
-	if rows != nil {
-		defer rows.Close()
-		if !rows.Next() {
-			return walletData, wallet.ErrAccountNotExist
-		}
-		for rows.Next() {
-			var rowID int
-			err := rows.Scan(&rowID, &walletData.OwnedBy, &walletData.Status, &walletData.Balance, &walletData.EnabledAt)
-			if err != nil {
-				return walletData, err
-			}
-			walletData.ID = hashAndFormatID(rowID)
-		}
+
+	_, err = stmt.Exec(balance, userID)
+	if err != nil {
+		return
 	}
+
+	return nil
+}
+
+func (p *repositoryStruct) UpdateAccountStatus(userID string, status string) (walletData wallet.Wallet, err error) {
+	field := "enabled_at"
+	if status == wallet.StatusDisabled {
+		field = "disabled_at"
+	}
+
+	query := fmt.Sprintf("UPDATE wallet set status = $1, %s = $2 where owned_by = $3 Returning id,owned_by,status,enabled_at,disabled_at,balance", field)
+	stmt, err := p.pqConnections.Prepare(query)
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(status, time.Now(), userID).Scan(&walletData.ID, &walletData.OwnedBy, &walletData.Status, &walletData.EnabledAt, &walletData.DisabledAt, &walletData.Balance)
+	if err != nil {
+		return
+	}
+
+	return walletData, nil
+}
+
+func (p *repositoryStruct) GetAccount(userID string) (walletData wallet.Wallet, err error) {
+
+	stmt, err := p.pqConnections.Prepare("SELECT id,owned_by,status,balance,enabled_at,disabled_at from wallet where owned_by = $1")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(userID).
+		Scan(&walletData.ID, &walletData.OwnedBy, &walletData.Status, &walletData.Balance, &walletData.EnabledAt, &walletData.DisabledAt)
+
 	return walletData, nil
 }
 
 func (p *repositoryStruct) CreateAccount(userID string) (err error) {
 
-	stmt, err := p.pqConnections.Prepare("INSERT INTO wallet (owned_by,status,balance)  VALUES ($1, $2, $3)")
+	stmt, err := p.pqConnections.Prepare("INSERT INTO wallet (id,owned_by,status,balance)  VALUES ($1, $2, $3, $4)")
 	if err != nil {
 		return
 	}
-	_, err = stmt.Exec(userID, "disabled", 0)
+	_, err = stmt.Exec(uuid.New().String(), userID, "disabled", 0)
+	if err != nil {
+		return
+	}
+	return
+}
+
+func (p *repositoryStruct) InsertTransactionData(transactionInput wallet.Transaction) (transactionID string, err error) {
+
+	stmt, err := p.pqConnections.Prepare("INSERT INTO transaction (id,wallet_id,actor_id,status,transacted_at,type,amount,reference_id,input_reference_id)  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id")
+	if err != nil {
+		return
+	}
+	err = stmt.QueryRow(uuid.New().String(), transactionInput.WalletID, transactionInput.ActorID, transactionInput.Status, transactionInput.TransactedAt, transactionInput.Type, transactionInput.Amount, transactionInput.ReferenceID, transactionInput.InputReferenceID).Scan(&transactionID)
 	if err != nil {
 		return
 	}
@@ -63,16 +96,29 @@ func (p *repositoryStruct) CreateAccount(userID string) (err error) {
 	return
 }
 
-func hashAndFormatID(id int) string {
+func (p *repositoryStruct) GetTransactionData(walletID string) (transactionsData []wallet.TransactionResponse, err error) {
 
-	idBytes := []byte(strconv.Itoa(id))
+	stmt, err := p.pqConnections.Prepare("SELECT id,status,transacted_at,type,amount,reference_id from transaction where wallet_id = $1")
+	if err != nil {
+		return
+	}
+	rows, err := stmt.Query(walletID)
+	if err != nil {
+		return
+	}
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var transactionData wallet.TransactionResponse
 
-	hash := sha1.Sum(idBytes)
+			err := rows.Scan(&transactionData.ID, &transactionData.Status, &transactionData.TransactedAt, &transactionData.Type, &transactionData.Amount, &transactionData.ReferenceID)
+			if err != nil {
+				return transactionsData, err
+			}
 
-	hashString := hex.EncodeToString(hash[:])
+			transactionsData = append(transactionsData, transactionData)
+		}
+	}
 
-	formattedID := fmt.Sprintf("%s-%s-%s-%s-%s",
-		hashString[:8], hashString[8:12], hashString[12:16], hashString[16:20], hashString[20:])
-
-	return formattedID
+	return transactionsData, nil
 }

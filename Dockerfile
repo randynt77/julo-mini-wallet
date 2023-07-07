@@ -21,6 +21,6 @@ WORKDIR /root/
 COPY --from=builder /app/julo-mini-wallet .
 COPY --from=builder /app/.env .       
 
-EXPOSE 8080
+EXPOSE 80
 
 CMD ["./julo-mini-wallet"]

@@ -25,7 +25,7 @@ func main() {
 	wallet_handler.RegisterRoute(router, usecase)
 
 	// start gracefull service
-	err := grace.Serve(":8080", router)
+	err := grace.Serve(":80", router)
 	if err != nil {
 		return
 	}

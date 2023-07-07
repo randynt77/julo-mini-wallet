@@ -7,13 +7,11 @@ import (
 
 type (
 	RestStandard struct {
-		Status  string      `json:"status"`
-		Data    interface{} `json:"data,omitempty"`
-		Message string      `json:"message,omitempty"`
-		Code    int         `json:"code,omitempty"`
+		Status string      `json:"status"`
+		Data   interface{} `json:"data,omitempty"`
 	}
 	ErrorResponse struct {
-		error string
+		Error string `json:"error,omitempty"`
 	}
 )
 
@@ -31,8 +29,9 @@ func (res RestStandard) Write(w http.ResponseWriter, httpStatus int) {
 
 func (res RestStandard) WriteError(w http.ResponseWriter, httpStatus int, errorMessage string) {
 	res.Status = "fail"
-	res.Data = ErrorResponse{
-		error: errorMessage,
+	errResp := ErrorResponse{
+		Error: errorMessage,
 	}
+	res.Data = errResp
 	res.Write(w, httpStatus)
 }
